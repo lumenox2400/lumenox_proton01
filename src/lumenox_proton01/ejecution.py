@@ -109,6 +109,7 @@ class LumeProton00:
 
         # 06. Select user
         df_candidates = df_users_copy[df_users_copy["viable"] == True].copy()
+        df_candidates = df_candidates[1:]
 
         if df_candidates.empty:
             self.username_chosen = None
