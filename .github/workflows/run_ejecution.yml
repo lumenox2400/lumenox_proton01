@@ -1,0 +1,76 @@
+name: Run Scraper
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Corre cada 45 minutos
+    - cron: "*/45 * * * *"
+
+concurrency:
+  group: scraper-run
+  cancel-in-progress: true  
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 46
+
+    # Expose required secrets as environment variables for ejecution.py
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_PRIVATE_KEY_ID: ${{ secrets.GCP_PRIVATE_KEY_ID }}
+      GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
+      GCP_CLIENT_EMAIL: ${{ secrets.GCP_CLIENT_EMAIL }}
+      GCP_CLIENT_ID: ${{ secrets.GCP_CLIENT_ID }}
+      GCP_CLIENT_X509_CERT_URL: ${{ secrets.GCP_CLIENT_X509_CERT_URL }}
+      CFG_PAGE_ID: ${{ secrets.CFG_PAGE_ID }}
+      CFG_ADMIN_SHEET_ID: ${{ secrets.CFG_ADMIN_SHEET_ID }}
+      CFG_SENDER_EMAIL: ${{ secrets.CFG_SENDER_EMAIL }}
+      CFG_PASSWORD_EMAIL: ${{ secrets.CFG_PASSWORD_EMAIL }}
+      CFG_RECIPIENT_EMAIL: ${{ secrets.CFG_RECIPIENT_EMAIL }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m venv .venv
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install -e .
+        playwright install --with-deps chromium
+
+    - name: Run scraper loop
+      run: |
+        source .venv/bin/activate
+        export PYTHONUNBUFFERED=1
+
+        echo "=== Starting scraper loop ==="
+        start_time=$(date +%s)
+
+        while true
+        do
+          echo "→ Running scraper iteration at $(date '+%Y-%m-%d %H:%M:%S')"
+          PYTHONUNBUFFERED=1 xvfb-run -a python src/lumenox_proton01/ejecution.py || echo "Scraper failed, continuing..."
+
+          echo "Sleeping for 60 seconds..."
+          for i in {1..60}; do
+            echo -n "."; sleep 1
+          done
+          echo ""
+
+          current_time=$(date +%s)
+          elapsed=$(( (current_time - start_time) / 60 ))
+          if [ $elapsed -ge 45 ]; then
+            echo "⏱ 45-hour limit reached — stopping loop."
+            break
+          fi
+        done
+
+        echo "=== Scraper loop finished ==="
