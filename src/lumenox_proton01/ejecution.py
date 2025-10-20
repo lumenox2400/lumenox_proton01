@@ -118,10 +118,10 @@ class LumeProton00:
             self.diff_bios = None
             self.final_msj = "Ningún usuario cumple reglas de adelantamiento"
         else:
-            self.username_chosen = df_candidates.col_2.iloc[1]
-            self.password_chosen = df_candidates.col_3.iloc[1]
-            self.type_appointment = df_candidates.col_4.iloc[1]
-            self.diff_bios = df_candidates.col_8.iloc[1]
+            self.username_chosen = df_candidates.col_2.iloc[0]
+            self.password_chosen = df_candidates.col_3.iloc[0]
+            self.type_appointment = df_candidates.col_4.iloc[0]
+            self.diff_bios = df_candidates.col_8.iloc[0]
             self.final_msj = "Usuario seleccionado"
 
         return self.username_chosen, self.password_chosen
