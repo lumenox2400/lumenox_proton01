@@ -521,13 +521,14 @@ class LumeProton00:
                             # Filter rows in that range
                             df_filtered_bios = df_filtered_bios[
                                 (df_filtered_bios["date"] >= var_start_date) &
-                                (df_filtered_bios["date"] <= var_end_date)]
+                                (df_filtered_bios["date"] < var_end_date)]
 
                             if df_filtered_bios.empty:
                                 self.final_msj = f"{self.final_msj} | No hay fechas disponibles para biometricos"
                                 return self.final_msj
                             else:
-                                filtered_bios_date = pd.to_datetime(df_filtered_bios.iloc[-1]["date"])
+                                df_filtered_bios = df_filtered_bios.sort_values(by=["date"],ascending=[False]).reset_index(drop=True)
+                                filtered_bios_date = pd.to_datetime(df_filtered_bios.iloc[0]["date"])
                                 self.final_msj = f"{self.final_msj} | Fecha biometricos disponible: {filtered_bios_date}"
                         else:
                             self.final_msj = f"{self.final_msj} | No hay fechas disponibles para biometricos"
