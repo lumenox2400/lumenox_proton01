@@ -343,10 +343,12 @@ class LumeProton00:
 
             # 09. Filter dates to see if there are available ones
             df_dates_norm = pd.DataFrame(df_dates)
-            df_filtered = df_dates_norm.loc[~df_dates_norm["is_disabled"]].head(1)
+            df_filtered = df_dates_norm.loc[~df_dates_norm["is_disabled"]].copy()
 
             if not df_filtered.empty:
-                date_str = df_filtered.iloc[0][["day", "month", "year"]].astype(str).str.cat(sep=" ")
+                df_filtered = df_filtered.sort_values(by=["year", "month", "day"],ascending=[True, True, True]).reset_index(drop=True)
+                idx = 1 if len(df_filtered) >= 2 else 0
+                date_str = df_filtered.iloc[idx][["day", "month", "year"]].astype(str).str.cat(sep=" ")
                 filtered_date = datetime.strptime(date_str, "%d %B %Y")
                 self.final_msj = f"{self.final_msj} | Fecha disponible: {filtered_date}"
             else:
