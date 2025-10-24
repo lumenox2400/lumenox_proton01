@@ -221,6 +221,7 @@ class LumeProton00:
                 # Break function
                 self.final_msj = f"{self.final_msj} | Cita dentro de {self.months_to_extract} meses | No elegible"
                 self.user_problem = self.username_chosen
+                self.reschedule_success = True
                 return self.final_msj
             else:
                 # Continue process
@@ -228,12 +229,26 @@ class LumeProton00:
 
 
             # 05. Click on "Continue"
-            continue_button = page.wait_for_selector(
-                'xpath=//*[@id="main"]/div[2]/div[2]/div[1]/div/div/div[1]/div[2]/ul/li/a',
-                state='visible', timeout=60000
-            )
-            continue_button.click()
-            page.wait_for_load_state("networkidle")
+            try:
+                # Try first button
+                continue_button = page.wait_for_selector(
+                    'xpath=//*[@id="main"]/div[2]/div[2]/div[1]/div/div/div[1]/div[2]/ul/li/a',
+                    state='visible', timeout=60000
+                )
+                continue_button.click()
+                page.wait_for_load_state("networkidle")
+            except:
+                try:
+                    # Try second button
+                    continue_button = page.wait_for_selector(
+                        'xpath=//*[@id="main"]/div[2]/div[3]/div[1]/div/div[1]/div[1]/div[2]/ul/li/a',
+                        state='visible', timeout=60000
+                    )
+                    continue_button.click()
+                    page.wait_for_load_state("networkidle")
+                except Exception as e:
+                    self.final_msj = f"{self.final_msj} | Ninguno de los botones fue encontrado: {e}"
+                    return self.final_msj
 
 
             # 06. Go to "Reschedule Appointment" or "Schedule Appointment"
@@ -847,7 +862,7 @@ class LumeProton00:
             self.send_email_notification(scenery=1)
 
         # In case of having successfully rescheduled
-        if self.reschedule_success:
+        if self.reschedule_success and self.user_problem != None:
             self.send_email_notification(scenery=2)
 
 
