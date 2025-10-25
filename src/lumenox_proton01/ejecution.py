@@ -511,8 +511,8 @@ class LumeProton00:
                             df_filtered_bios["month"] = pd.to_datetime(df_filtered_bios["month"], format="%B").dt.month
                             df_filtered_bios["date"] = pd.to_datetime(df_filtered_bios[["year", "month", "day"]])
 
-                            # Calculate date range (4 days before to the appointment)
-                            var_start_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d") - timedelta(days=4)
+                            # Calculate date range (2 days before to the appointment)
+                            var_start_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d") - timedelta(days=2)
                             var_end_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d")
 
                             print('Biometricos df disponibles')
