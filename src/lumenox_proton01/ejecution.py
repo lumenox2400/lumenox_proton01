@@ -408,8 +408,8 @@ class LumeProton00:
                             continue
 
                         # --- FILTER: only keep biometric dates in the 2 days before the appointment_date ---
-                        var_start_date = self.appointment_date_new - timedelta(days=2)
-                        var_end_date = self.appointment_date_new  # exclusive upper bound, same logic as before
+                        var_start_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d") - timedelta(days=2) 
+                        var_end_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d")
 
                         df_bios = df_bios[(df_bios["date"] >= var_start_date) & (df_bios["date"] < var_end_date)].copy()
                         df_bios = df_bios.sort_values("date").reset_index(drop=True)
@@ -420,7 +420,7 @@ class LumeProton00:
                             bios_date = pd.to_datetime(df_bios.iloc[j]["date"])
                             print(f"  → Trying biometrics date {bios_date}")
 
-                            bios_success = self._try_biometric_combination(page, appointment_date, bios_date)
+                            bios_success = self._try_biometric_combination(page, self.appointment_date_new, bios_date)
                             if bios_success:
                                 success = True
                                 break  # got all 4 fields
