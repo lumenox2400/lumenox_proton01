@@ -141,6 +141,9 @@ class LumeProton00:
         self.biometrics_date_new = None
         self.biometrics_hour_new = None
 
+        # Initialize df_bios_raw
+        self.df_bios_raw = pd.DataFrame()
+
         print('Months', self.months_to_extract)
 
         with sync_playwright() as p:
@@ -354,10 +357,6 @@ class LumeProton00:
                 self.final_msj += " | No hay fechas disponibles para entrevista"
                 return self.final_msj
 
-            df_filtered = df_filtered.sort_values(by=["year", "month", "day"]).reset_index(drop=True)
-            print('Entrevistas', df_filtered.head())
-
-
             # --- Iterate over available appointment dates ---
             success = False
             for i in range(len(df_filtered)):
@@ -406,6 +405,13 @@ class LumeProton00:
                         if df_bios.empty:
                             print("No biometrics dates available, trying next appointment date...")
                             continue
+
+                        # --- FILTER: only keep biometric dates in the 2 days before the appointment_date ---
+                        var_start_date = self.appointment_date_new - timedelta(days=2)
+                        var_end_date = self.appointment_date_new  # exclusive upper bound, same logic as before
+
+                        df_bios = df_bios[(df_bios["date"] >= var_start_date) & (df_bios["date"] < var_end_date)].copy()
+                        df_bios = df_bios.sort_values("date").reset_index(drop=True)
 
                         # Try top 2 biometric dates for this appointment
                         bios_success = False
@@ -874,38 +880,42 @@ class LumeProton00:
     # 04. Auxiliary function to extract biometric dates
     def _extract_biometric_dates(self, page):
         """Ensure the biometric date field is visible and return available dates"""
-        try:
-            page.evaluate("""
-            () => {
-                const el = document.querySelector('#appointments_asc_appointment_date');
-                if (!el) return;
-                let p = el;
-                while (p) {
-                    p.style.display = 'block';
-                    p.style.visibility = 'visible';
-                    p = p.parentElement;
+        if self.df_bios_raw.empty:
+            try:
+                page.evaluate("""
+                () => {
+                    const el = document.querySelector('#appointments_asc_appointment_date');
+                    if (!el) return;
+                    let p = el;
+                    while (p) {
+                        p.style.display = 'block';
+                        p.style.visibility = 'visible';
+                        p = p.parentElement;
+                    }
+                    el.removeAttribute('readonly');
                 }
-                el.removeAttribute('readonly');
-            }
-            """)
-            bios_input = page.wait_for_selector('#appointments_asc_appointment_date', state='visible', timeout=8000)
-            bios_input.click(force=True)
-            page.wait_for_load_state("networkidle")
+                """)
+                bios_input = page.wait_for_selector('#appointments_asc_appointment_date', state='visible', timeout=8000)
+                bios_input.click(force=True)
+                page.wait_for_load_state("networkidle")
 
-            df_bios = pd.DataFrame(self.extract_dates(page))
-            df_bios = df_bios.loc[~df_bios["is_disabled"]].copy()
+                df_bios = pd.DataFrame(self.extract_dates(page))
+                df_bios = df_bios.loc[~df_bios["is_disabled"]].copy()
 
-            if df_bios.empty:
+                if df_bios.empty:
+                    return pd.DataFrame()
+
+                df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
+                df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
+                df_bios = df_bios.sort_values("date").reset_index(drop=True)
+                self.df_bios_raw = df_bios.copy()
+                return df_bios
+
+            except Exception as e:
+                print("Error extracting biometric dates:", e)
                 return pd.DataFrame()
-
-            df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
-            df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
-            df_bios = df_bios.sort_values("date").reset_index(drop=True)
-            return df_bios
-
-        except Exception as e:
-            print("Error extracting biometric dates:", e)
-            return pd.DataFrame()
+        else:
+            return self.df_bios_raw
 
     # 05. Auxiliary function to try biometric date/hour combinations
     def _try_biometric_combination(self, page, appointment_date, bios_date):
