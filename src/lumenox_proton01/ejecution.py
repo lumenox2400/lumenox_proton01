@@ -883,6 +883,51 @@ class LumeProton00:
         """Ensure the biometric date field is visible and return available dates"""
         if self.df_bios_raw.empty:
             try:
+                for attempt in range(3):
+                    page.wait_for_timeout(2000)
+
+                    page.evaluate("""
+                    () => {
+                        const el = document.querySelector('#appointments_asc_appointment_date');
+                        if (!el) return;
+
+                        // Forzar visibilidad en el input y todos sus padres
+                        let parent = el;
+                        while (parent) {
+                            parent.style.display = 'block';
+                            parent.style.visibility = 'visible';
+                            parent.style.opacity = '1';
+                            parent.style.height = 'auto';
+                            parent = parent.parentElement;
+                        }
+
+                        // Quitar readonly y asegurar foco
+                        el.removeAttribute('readonly');
+                        el.style.display = 'block';
+                        el.style.visibility = 'visible';
+                        el.style.opacity = '1';
+                        el.dispatchEvent(new Event('focus', { bubbles: true }));
+                        el.dispatchEvent(new Event('click', { bubbles: true }));
+
+                        // Intentar abrir jQuery datepicker
+                        if (window.jQuery && jQuery.fn.datepicker) {
+                            try {
+                                jQuery(el).datepicker('show');
+                            } catch (err) {
+                                console.log('Error abriendo datepicker:', err);
+                            }
+                        }
+                    }
+                    """)
+
+                    # Wait for real visibility of the element
+                    try:
+                        page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=5000)
+                        print(f"Visible tras intento {attempt+1}")
+                        return true
+                    except:
+                        print(f"No visible en intento {attempt+1}")
+                
                 page.evaluate("""
                 () => {
                     const el = document.querySelector('#appointments_asc_appointment_date');
