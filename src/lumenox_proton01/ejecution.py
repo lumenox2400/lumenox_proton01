@@ -395,6 +395,7 @@ class LumeProton00:
                     self.appointment_hour_new = available_times[0]
                     page.select_option('#appointments_consulate_appointment_time', self.appointment_hour_new)
                     page.click("div.callout")
+                    time.sleep(2)
                     self.final_msj += f" | Entrevista: {self.appointment_date_new} {self.appointment_hour_new}"
 
                     # ---- Biometrics date/hour loop ----
