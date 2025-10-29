@@ -886,22 +886,29 @@ class LumeProton00:
 
     # 04. Auxiliary function to extract biometric dates
     def _extract_biometric_dates(self, page):
-        """Ensure the biometric date field is visible and return available dates"""
+        """Ensure the biometric date field is visible and return available dates."""
         if not self.df_bios_raw.empty:
             return self.df_bios_raw
 
         try:
-            for attempt in range(3):
-                page.wait_for_timeout(1000)
+            for attempt in range(5):
+                page.wait_for_timeout(1500)
                 print(f"Intento {attempt+1} de mostrar biométricos...")
 
-                # Force visibility and open the datepicker
+                # Asegurar que el contenedor exista
+                try:
+                    page.wait_for_selector("#asc_date_time", timeout=8000)
+                except Exception:
+                    print("No se encontró el contenedor #asc_date_time todavía.")
+                    continue
+
+                # Forzar visibilidad completa del campo y contenedor
                 page.evaluate("""
                 () => {
                     const el = document.querySelector('#appointments_asc_appointment_date');
                     if (!el) return;
 
-                    // Asegurar que el bloque contenedor esté visible
+                    // Mostrar el contenedor del calendario
                     const ascContainer = document.querySelector('#asc_date_time');
                     if (ascContainer) {
                         ascContainer.style.display = 'block';
@@ -910,13 +917,14 @@ class LumeProton00:
                         ascContainer.style.height = 'auto';
                     }
 
-                    // Asegurar que el contenedor de error no bloquee la vista
+                    // Ocultar mensaje de sistema ocupado
                     const notAvailable = document.querySelector('#asc_date_time_not_available');
                     if (notAvailable) {
                         notAvailable.style.display = 'none';
+                        notAvailable.style.visibility = 'hidden';
                     }
 
-                    // Forzar visibilidad en toda la jerarquía del input
+                    // Forzar visibilidad en todos los padres del input
                     let p = el;
                     while (p) {
                         p.style.display = 'block';
@@ -926,47 +934,62 @@ class LumeProton00:
                         p = p.parentElement;
                     }
 
-                    // Hacer el input editable y disparar eventos
+                    // Hacer el input editable y enfocado
                     el.removeAttribute('readonly');
                     el.style.display = 'block';
                     el.style.visibility = 'visible';
                     el.dispatchEvent(new Event('focus', { bubbles: true }));
                     el.dispatchEvent(new Event('click', { bubbles: true }));
 
-                    // Mostrar el datepicker
+                    // Intentar mostrar el datepicker si jQuery está disponible
                     if (window.jQuery && jQuery.fn.datepicker) {
                         try { jQuery(el).datepicker('show'); } catch (err) {}
                     }
                 }
                 """)
 
-                print(page.content())
-    
-                # Wait for the input and possibly the datepicker popup
+                # Esperar el calendario visible
                 try:
                     page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=4000)
                     page.wait_for_selector(".ui-datepicker-calendar", state="visible", timeout=4000)
-                    print("Datepicker visible")
+                    print("Datepicker visible.")
                     break
                 except Exception as e:
                     print(f"No visible en intento {attempt+1}: {e}")
+                    if attempt == 4:
+                        print("Último intento fallido. No se logró mostrar el calendario.")
+                        return pd.DataFrame()
 
-            # Now extract available dates
+            # Intentar extraer las fechas
             df_bios = pd.DataFrame(self.extract_dates(page))
             df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
 
+            # Si no hay fechas, intentar un segundo intento forzando de nuevo
             if df_bios.empty:
-                print("No se encontraron fechas biométricas.")
+                print("No se encontraron fechas biométricas. Reintentando extracción...")
+                page.evaluate("() => window.scrollTo(0, document.body.scrollHeight);")
+                page.wait_for_timeout(2000)
+                df_bios = pd.DataFrame(self.extract_dates(page))
+                df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
+
+            if df_bios.empty:
+                print("No se encontraron fechas biométricas tras reintento.")
+                self.final_msj += f" | No se encontraron fechas biométricas tras reintento."
                 return pd.DataFrame()
 
+            # Normalizar y ordenar
             df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
             df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
             df_bios = df_bios.sort_values("date").reset_index(drop=True)
-            self.df_bios_raw = df_bios.drop_duplicates().copy()
+            self.df_bios_raw = df_bios.copy()
+
+            print(f"{len(df_bios)} fechas biométricas disponibles encontradas.")
+            self.final_msj += f" | Fechas biométricas encontradas: {len(df_bios)}"
             return df_bios
 
         except Exception as e:
             print("Error extracting biometric dates:", e)
+            self.final_msj += f" | Error extracting biometric dates: {e}"
             return pd.DataFrame()
 
     # def _extract_biometric_dates(self, page):
