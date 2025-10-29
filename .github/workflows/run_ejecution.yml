@@ -8,12 +8,12 @@ on:
 
 concurrency:
   group: scraper-run
-  cancel-in-progress: true  
+  cancel-in-progress: false  
 
 jobs:
   run-scraper:
     runs-on: ubuntu-latest
-    timeout-minutes: 46
+    timeout-minutes: 40
 
     # Expose required secrets as environment variables for ejecution.py
     env:
@@ -67,8 +67,8 @@ jobs:
 
           current_time=$(date +%s)
           elapsed=$(( (current_time - start_time) / 60 ))
-          if [ $elapsed -ge 45 ]; then
-            echo "⏱ 45-hour limit reached — stopping loop."
+          if [ $elapsed -ge 39 ]; then
+            echo "⏱ 39-minute limit reached — stopping loop."
             break
           fi
         done
