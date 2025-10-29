@@ -392,7 +392,7 @@ class LumeProton00:
                         print(f"No hours for {appointment_date}, trying next appointment date...")
                         continue
 
-                    self.appointment_hour_new = available_-times[0]
+                    self.appointment_hour_new = available_times[0]
                     page.select_option('#appointments_consulate_appointment_time', self.appointment_hour_new)
                     page.click("div.callout")
                     time.sleep(2)
