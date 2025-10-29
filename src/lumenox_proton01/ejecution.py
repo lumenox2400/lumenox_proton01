@@ -887,53 +887,17 @@ class LumeProton00:
     # 04. Auxiliary function to extract biometric dates
     def _extract_biometric_dates(self, page):
         """Ensure the biometric date field is visible and return available dates"""
-        if self.df_bios_raw.empty:
-            try:
-                for attempt in range(3):
-                    page.wait_for_timeout(2000)
+        if not self.df_bios_raw.empty:
+            return self.df_bios_raw
 
-                    page.evaluate("""
-                    () => {
-                        const el = document.querySelector('#appointments_asc_appointment_date');
-                        if (!el) return;
+        try:
+            for attempt in range(3):
+                page.wait_for_timeout(1000)
+                print(f"Intento {attempt+1} de mostrar biométricos...")
 
-                        // Forzar visibilidad en el input y todos sus padres
-                        let parent = el;
-                        while (parent) {
-                            parent.style.display = 'block';
-                            parent.style.visibility = 'visible';
-                            parent.style.opacity = '1';
-                            parent.style.height = 'auto';
-                            parent = parent.parentElement;
-                        }
+                print(page.content()) 
 
-                        // Quitar readonly y asegurar foco
-                        el.removeAttribute('readonly');
-                        el.style.display = 'block';
-                        el.style.visibility = 'visible';
-                        el.style.opacity = '1';
-                        el.dispatchEvent(new Event('focus', { bubbles: true }));
-                        el.dispatchEvent(new Event('click', { bubbles: true }));
-
-                        // Intentar abrir jQuery datepicker
-                        if (window.jQuery && jQuery.fn.datepicker) {
-                            try {
-                                jQuery(el).datepicker('show');
-                            } catch (err) {
-                                console.log('Error abriendo datepicker:', err);
-                            }
-                        }
-                    }
-                    """)
-
-                    # Wait for real visibility of the element
-                    try:
-                        page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=5000)
-                        print(f"Visible tras intento {attempt+1}")
-                        return true
-                    except:
-                        print(f"No visible en intento {attempt+1}")
-                
+                # Force visibility and open the datepicker
                 page.evaluate("""
                 () => {
                     const el = document.querySelector('#appointments_asc_appointment_date');
@@ -942,32 +906,132 @@ class LumeProton00:
                     while (p) {
                         p.style.display = 'block';
                         p.style.visibility = 'visible';
+                        p.style.opacity = '1';
+                        p.style.height = 'auto';
                         p = p.parentElement;
                     }
                     el.removeAttribute('readonly');
+                    el.style.display = 'block';
+                    el.style.visibility = 'visible';
+                    el.dispatchEvent(new Event('focus', { bubbles: true }));
+                    el.dispatchEvent(new Event('click', { bubbles: true }));
+
+                    if (window.jQuery && jQuery.fn.datepicker) {
+                        try { jQuery(el).datepicker('show'); } catch (err) {}
+                    }
                 }
                 """)
-                bios_input = page.wait_for_selector('#appointments_asc_appointment_date', state='visible', timeout=8000)
-                bios_input.click(force=True)
-                page.wait_for_load_state("networkidle")
 
-                df_bios = pd.DataFrame(self.extract_dates(page))
-                df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
+                # Wait for the input and possibly the datepicker popup
+                try:
+                    page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=4000)
+                    page.wait_for_selector(".ui-datepicker-calendar", state="visible", timeout=4000)
+                    print("Datepicker visible")
+                    break
+                except Exception as e:
+                    print(f"No visible en intento {attempt+1}: {e}")
 
-                if df_bios.empty:
-                    return pd.DataFrame()
+            # Now extract available dates
+            df_bios = pd.DataFrame(self.extract_dates(page))
+            df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
 
-                df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
-                df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
-                df_bios = df_bios.sort_values("date").reset_index(drop=True)
-                self.df_bios_raw = df_bios.copy()
-                return df_bios
-
-            except Exception as e:
-                print("Error extracting biometric dates:", e)
+            if df_bios.empty:
+                print("No se encontraron fechas biométricas.")
                 return pd.DataFrame()
-        else:
-            return self.df_bios_raw
+
+            df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
+            df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
+            df_bios = df_bios.sort_values("date").reset_index(drop=True)
+            self.df_bios_raw = df_bios.drop_duplicates().copy()
+            return df_bios
+
+        except Exception as e:
+            print("Error extracting biometric dates:", e)
+            return pd.DataFrame()
+
+    # def _extract_biometric_dates(self, page):
+    #     """Ensure the biometric date field is visible and return available dates"""
+    #     if self.df_bios_raw.empty:
+    #         try:
+    #             for attempt in range(3):
+    #                 page.wait_for_timeout(2000)
+
+    #                 page.evaluate("""
+    #                 () => {
+    #                     const el = document.querySelector('#appointments_asc_appointment_date');
+    #                     if (!el) return;
+
+    #                     // Forzar visibilidad en el input y todos sus padres
+    #                     let parent = el;
+    #                     while (parent) {
+    #                         parent.style.display = 'block';
+    #                         parent.style.visibility = 'visible';
+    #                         parent.style.opacity = '1';
+    #                         parent.style.height = 'auto';
+    #                         parent = parent.parentElement;
+    #                     }
+
+    #                     // Quitar readonly y asegurar foco
+    #                     el.removeAttribute('readonly');
+    #                     el.style.display = 'block';
+    #                     el.style.visibility = 'visible';
+    #                     el.style.opacity = '1';
+    #                     el.dispatchEvent(new Event('focus', { bubbles: true }));
+    #                     el.dispatchEvent(new Event('click', { bubbles: true }));
+
+    #                     // Intentar abrir jQuery datepicker
+    #                     if (window.jQuery && jQuery.fn.datepicker) {
+    #                         try {
+    #                             jQuery(el).datepicker('show');
+    #                         } catch (err) {
+    #                             console.log('Error abriendo datepicker:', err);
+    #                         }
+    #                     }
+    #                 }
+    #                 """)
+
+    #                 # Wait for real visibility of the element
+    #                 try:
+    #                     page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=5000)
+    #                     print(f"Visible tras intento {attempt+1}")
+    #                     return true
+    #                 except:
+    #                     print(f"No visible en intento {attempt+1}")
+                
+    #             page.evaluate("""
+    #             () => {
+    #                 const el = document.querySelector('#appointments_asc_appointment_date');
+    #                 if (!el) return;
+    #                 let p = el;
+    #                 while (p) {
+    #                     p.style.display = 'block';
+    #                     p.style.visibility = 'visible';
+    #                     p = p.parentElement;
+    #                 }
+    #                 el.removeAttribute('readonly');
+    #             }
+    #             """)
+    #             bios_input = page.wait_for_selector('#appointments_asc_appointment_date', state='visible', timeout=8000)
+    #             bios_input.click(force=True)
+    #             page.wait_for_load_state("networkidle")
+
+    #             df_bios = pd.DataFrame(self.extract_dates(page))
+    #             df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
+
+    #             if df_bios.empty:
+    #                 return pd.DataFrame()
+
+    #             df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
+    #             df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
+    #             df_bios = df_bios.sort_values("date").reset_index(drop=True)
+    #             self.df_bios_raw = df_bios.copy()
+    #             return df_bios
+
+    #         except Exception as e:
+    #             print("Error extracting biometric dates:", e)
+    #             return pd.DataFrame()
+    #     else:
+    #         return self.df_bios_raw
 
     # 05. Auxiliary function to try biometric date/hour combinations
     def _try_biometric_combination(self, page, appointment_date, bios_date):
