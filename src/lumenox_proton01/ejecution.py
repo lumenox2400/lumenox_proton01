@@ -880,7 +880,8 @@ class LumeProton00:
                 f'{select_id} option',
                 'opts => opts.map(o => o.value).filter(v => v && v.trim() !== "")'
             )
-        except:
+        except Exception as e:
+            self.final_msj += f" | No hay horarios disponibles válidos para el selector {select_id}: {e}"
             return []
 
     # 04. Auxiliary function to extract biometric dates
@@ -988,6 +989,7 @@ class LumeProton00:
             available_times = self._get_available_hours(page, "#appointments_asc_appointment_time")
             if not available_times:
                 print(f"No biometrics hours for {bios_date}")
+                self.final_msj += f" | No biometrics hours available for {bios_date}"
                 return False
 
             self.biometrics_hour_new = available_times[0]
