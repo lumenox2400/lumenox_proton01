@@ -405,6 +405,7 @@ class LumeProton00:
                         print('Biometricos', df_bios.head())
                         if df_bios.empty:
                             print("No biometrics dates available, trying next appointment date...")
+                            self.final_msj += " | No biometrics dates available, trying next appointment date..."
                             continue
 
                         # --- FILTER: only keep biometric dates in the 2 days before the appointment_date ---
@@ -421,6 +422,7 @@ class LumeProton00:
                         for j in range(1, min(3, len(df_bios) + 1)):
                             bios_date = pd.to_datetime(df_bios.iloc[-j]["date"])
                             print(f"  → Trying biometrics date {bios_date}")
+                            self.final_msj += f" | Trying biometrics date {bios_date}"
 
                             bios_success = self._try_biometric_combination(page, self.appointment_date_new, bios_date)
                             if bios_success:
@@ -437,6 +439,7 @@ class LumeProton00:
 
                 except Exception as e:
                     print(f"Error trying appointment date {i}: {e}")
+                    self.final_msj += f" | Error trying appointment date {i}: {e}"
                     continue
 
             if not success:
