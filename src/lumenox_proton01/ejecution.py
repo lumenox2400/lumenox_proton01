@@ -418,7 +418,7 @@ class LumeProton00:
 
                         # Try top 2 biometric dates for this appointment
                         bios_success = False
-                        for j in range(min(2, len(df_bios))):
+                        for j in range(1, min(3, len(df_bios) + 1)):
                             bios_date = pd.to_datetime(df_bios.iloc[-j]["date"])
                             print(f"  → Trying biometrics date {bios_date}")
 
