@@ -1115,35 +1115,65 @@ class LumeProton00:
     # The appointment and bios calendars are looped through
     def extract_dates(self, page):
         all_dates = []
-        for _ in range(self.months_to_extract):
-            # Obtain the HTML of the current page
+        for m in range(self.months_to_extract):
+            # Obtener el HTML actual
             soup = BeautifulSoup(page.content(), 'html.parser')
             calendar_groups = soup.find_all("div", class_="ui-datepicker-group")
 
+            if not calendar_groups:
+                print(f"[extract_dates] No se encontraron grupos de calendario en mes {m+1}.")
+                continue
+
             for group in calendar_groups:
-                month = group.find("span", class_="ui-datepicker-month").text
-                year = group.find("span", class_="ui-datepicker-year").text
+                month_tag = group.find("span", class_="ui-datepicker-month")
+                year_tag = group.find("span", class_="ui-datepicker-year")
                 calendar = group.find("table", class_="ui-datepicker-calendar")
-                days = calendar.find_all("td")
 
-                for day in days:
+                if not (month_tag and year_tag and calendar):
+                    continue
+
+                month = month_tag.text.strip()
+                year = year_tag.text.strip()
+
+                for day in calendar.find_all("td"):
                     classes = day.get("class", [])
-                    is_selectable = "ui-datepicker-unselectable" not in classes
-                    is_disabled = "ui-state-disabled" in classes
+                    if "ui-datepicker-other-month" in classes:
+                        continue
 
-                    if day.text and "ui-datepicker-other-month" not in classes:
-                        date_info = {
-                            'day': day.text.strip(),
-                            'month': month,
-                            'year': year,
-                            'is_selectable': is_selectable,
-                            'is_disabled': is_disabled
+                    date_info = {
+                        'day': day.text.strip(),
+                        'month': month,
+                        'year': year,
+                        'is_selectable': "ui-datepicker-unselectable" not in classes,
+                        'is_disabled': "ui-state-disabled" in classes
+                    }
+                    all_dates.append(date_info)
+
+            # Intentar pasar al siguiente mes
+            try:
+                next_button = page.query_selector('//a[@title="Next"]')
+                if next_button:
+                    # Si el botón está oculto, intentar hacerlo visible
+                    page.evaluate("""
+                    () => {
+                        const btn = document.querySelector('a[title="Next"]');
+                        if (btn) {
+                            btn.style.display = 'block';
+                            btn.style.visibility = 'visible';
                         }
-                        all_dates.append(date_info)
-
-            # Wait and click on the "Next" button
-            next_button = page.wait_for_selector('xpath=//a[@title="Next"]', state='visible', timeout=60000)
-            next_button.click()
+                    }
+                    """)
+                    # Esperar un breve momento y hacer clic
+                    page.wait_for_timeout(500)
+                    next_button.click()
+                    page.wait_for_timeout(1200)
+                else:
+                    print("[extract_dates] No se encontró botón Next, saliendo del bucle.")
+                    self.final_msj += " | No se encontró botón Next"
+                    break
+            except Exception as e:
+                print(f"[extract_dates] No se pudo hacer clic en Next (mes {m+1}): {e}")
+                break
 
         return all_dates
 
