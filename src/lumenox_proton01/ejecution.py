@@ -349,7 +349,7 @@ class LumeProton00:
 
             # 09. Filter dates to see if there are available ones
             df_dates_norm = pd.DataFrame(df_dates)
-            df_filtered = df_dates_norm.loc[~df_dates_norm["is_disabled"]].copy()
+            df_filtered = df_dates_norm.loc[~df_dates_norm["is_disabled"]].drop_duplicates().copy()
 
             print('Entrevistas habiles', df_filtered.head())
 
@@ -392,7 +392,7 @@ class LumeProton00:
                         print(f"No hours for {appointment_date}, trying next appointment date...")
                         continue
 
-                    self.appointment_hour_new = available_times[0]
+                    self.appointment_hour_new = available_-times[0]
                     page.select_option('#appointments_consulate_appointment_time', self.appointment_hour_new)
                     page.click("div.callout")
                     time.sleep(2)
@@ -414,10 +414,12 @@ class LumeProton00:
                         df_bios = df_bios[(df_bios["date"] >= var_start_date) & (df_bios["date"] < var_end_date)].copy()
                         df_bios = df_bios.sort_values("date").reset_index(drop=True)
 
+                        print('Biometricos filtrados', df_bios.head())
+
                         # Try top 2 biometric dates for this appointment
                         bios_success = False
                         for j in range(min(2, len(df_bios))):
-                            bios_date = pd.to_datetime(df_bios.iloc[j]["date"])
+                            bios_date = pd.to_datetime(df_bios.iloc[-j]["date"])
                             print(f"  → Trying biometrics date {bios_date}")
 
                             bios_success = self._try_biometric_combination(page, self.appointment_date_new, bios_date)
@@ -946,7 +948,7 @@ class LumeProton00:
                 page.wait_for_load_state("networkidle")
 
                 df_bios = pd.DataFrame(self.extract_dates(page))
-                df_bios = df_bios.loc[~df_bios["is_disabled"]].copy()
+                df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
 
                 if df_bios.empty:
                     return pd.DataFrame()
