@@ -349,836 +349,393 @@ class LumeProton00:
 
             # 09. Filter dates to see if there are available ones
             df_dates_norm = pd.DataFrame(df_dates)
-            df_filtered = df_dates_norm.loc[~df_dates_norm["is_disabled"]].drop_duplicates().copy()
+            df_filtered = df_dates_norm.loc[~df_dates_norm["is_disabled"]].copy()
 
-            print('Entrevistas habiles', df_filtered.head())
-
-            if df_filtered.empty:
-                self.final_msj += " | No hay fechas disponibles para entrevista"
+            if not df_filtered.empty:
+                df_filtered = df_filtered.sort_values(by=["year", "month", "day"],ascending=[True, True, True]).reset_index(drop=True)
+                idx = 1 if len(df_filtered) >= 2 else 0
+                date_str = df_filtered.iloc[idx][["day", "month", "year"]].astype(str).str.cat(sep=" ")
+                filtered_date = datetime.strptime(date_str, "%d %B %Y")
+                self.final_msj = f"{self.final_msj} | Fecha disponible: {filtered_date}"
+            else:
+                self.final_msj = f"{self.final_msj} | No hay fechas disponibles"
                 return self.final_msj
 
-            # --- Iterate over available appointment dates ---
-            success = False
-            for i in range(len(df_filtered)):
+            if filtered_date < self.appointment_date:
                 try:
-                    date_str = df_filtered.iloc[i][["day", "month", "year"]].astype(str).str.cat(sep=" ")
-                    appointment_date = datetime.strptime(date_str, "%d %B %Y")
-
-                    if appointment_date >= self.appointment_date:
-                        continue  # skip if it's not earlier
-
-                    print(f"Trying appointment date: {appointment_date}")
-
-                    # ---- Select appointment date ----
-                    calendar_input = page.query_selector("#appointments_consulate_appointment_date")
+                    # Remove the readonly attribute
                     page.evaluate("(el) => el.removeAttribute('readonly')", calendar_input)
+
+                    # Set the value and trigger events
                     calendar_input.evaluate(
                         """(el, value) => {
                             el.value = value;
                             el.dispatchEvent(new Event('input', { bubbles: true }));
                             el.dispatchEvent(new Event('change', { bubbles: true }));
                         }""",
-                        appointment_date.strftime("%Y-%m-%d")
+                        filtered_date.strftime("%Y-%m-%d")
                     )
                     page.click("div.callout")
-
                     calendar_button.click()
+                    # Select the desired day (according to the library)
                     page.click("a.ui-state-default.ui-state-active")
-                    self.appointment_date_new = appointment_date.strftime("%Y-%m-%d")
+                    self.appointment_date_new = filtered_date.strftime("%Y-%m-%d")
+                    self.final_msj = f"{self.final_msj} | Toma la fecha {self.appointment_date_new}"
 
-                    # ---- Get available interview hours ----
-                    available_times = self._get_available_hours(page, "#appointments_consulate_appointment_time")
-                    if not available_times:
-                        print(f"No hours for {appointment_date}, trying next appointment date...")
-                        continue
+                    # Select first hour
+                    time_select = page.wait_for_selector(
+                        '//*[@id="appointments_consulate_appointment_time_input"]',
+                        state='visible', timeout=30000
+                    )
+                    time_select.click()
 
-                    self.appointment_hour_new = available_times[0]
-                    page.select_option('#appointments_consulate_appointment_time', self.appointment_hour_new)
-                    page.click("div.callout")
-                    time.sleep(2)
-                    self.final_msj += f" | Entrevista: {self.appointment_date_new} {self.appointment_hour_new}"
+                    # Wait for real options to be available
+                    page.wait_for_function("""
+                    () => {
+                    const s = document.querySelector('#appointments_consulate_appointment_time');
+                    return s && s.options && s.options.length > 1 && s.options[1].value;
+                    }
+                    """, timeout=10000)
 
-                    # ---- Biometrics date/hour loop ----
-                    if self.type_appointment in ['Visa (Entrevista + Biométricos)', 'Visa grupal (Entrevista + Biométricos)']:
-                        # Extract available biometrics dates
-                        df_bios = self._extract_biometric_dates(page)
-                        print('Biometricos', df_bios.head())
-                        if df_bios.empty:
-                            print("No biometrics dates available, trying next appointment date...")
-                            self.final_msj += " | No biometrics dates available, trying next appointment date..."
-                            continue
+                    # Extract available hours directly with JS
+                    available_times = page.eval_on_selector_all(
+                        '#appointments_consulate_appointment_time option',
+                        'opts => opts.map(o => o.value).filter(v => v)'
+                    )
 
-                        # --- FILTER: only keep biometric dates in the 2 days before the appointment_date ---
-                        var_start_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d") - timedelta(days=2) 
-                        var_end_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d")
+                    print("available_times:", available_times)
 
-                        df_bios = df_bios[(df_bios["date"] >= var_start_date) & (df_bios["date"] < var_end_date)].copy()
-                        df_bios = df_bios.sort_values("date").reset_index(drop=True)
-
-                        print('Biometricos filtrados', df_bios.head())
-
-                        # Try top 2 biometric dates for this appointment
-                        bios_success = False
-                        for j in range(1, min(3, len(df_bios) + 1)):
-                            bios_date = pd.to_datetime(df_bios.iloc[-j]["date"])
-                            print(f"  → Trying biometrics date {bios_date}")
-                            self.final_msj += f" | Trying biometrics date {bios_date}"
-
-                            bios_success = self._try_biometric_combination(page, self.appointment_date_new, bios_date)
-                            if bios_success:
-                                success = True
-                                break  # got all 4 fields
-
-                        if success:
-                            break  # exit outer loop too
-
+                    if available_times:
+                        self.appointment_hour_new = available_times[0]
+                        page.select_option('#appointments_consulate_appointment_time', self.appointment_hour_new)
+                        page.click("div.callout")
+                        time.sleep(1)
+                        time_select.click()
+                        page.click("div.callout")
+                        self.final_msj = f"{self.final_msj} | Toma la hora {self.appointment_hour_new}"
                     else:
-                        # No biometrics required
-                        success = True
-                        break
+                        self.final_msj = f"{self.final_msj} | No hay horarios disponibles validos"
+                        return self.final_msj
+
+
+                    # Select Biometrics Calendar // Or First Appointment
+                    if self.type_appointment == 'Visa (Entrevista + Biométricos)' or new_appointment:
+
+                        print("Checking if biometrics input exists...")
+                        input_exists = page.locator("#appointments_asc_appointment_date").count()
+                        print(f"Found {input_exists} elements with that ID")
+
+                        # Check visibility and status
+                        is_visible = page.locator("#appointments_asc_appointment_date").is_visible()
+                        print(f"Is visible before JS fix? {is_visible}")
+
+                        html_snippet = page.eval_on_selector("#appointments_asc_appointment_date", "el => el.outerHTML")
+                        print("Input HTML before fix:", html_snippet)
+
+                        display_status = page.eval_on_selector("#appointments_asc_appointment_date", "el => window.getComputedStyle(el).display")
+                        visibility_status = page.eval_on_selector("#appointments_asc_appointment_date", "el => window.getComputedStyle(el).visibility")
+                        print(f"CSS display={display_status}, visibility={visibility_status}")
+
+                        # FIX: Force-enable and trigger the biometric date input manually
+                        print("Trying to force show biometrics date input via JS...")
+
+                        for attempt in range(3):
+                            page.wait_for_timeout(2000)
+
+                            page.evaluate("""
+                            () => {
+                                const el = document.querySelector('#appointments_asc_appointment_date');
+                                if (!el) return;
+
+                                // Forzar visibilidad en el input y todos sus padres
+                                let parent = el;
+                                while (parent) {
+                                    parent.style.display = 'block';
+                                    parent.style.visibility = 'visible';
+                                    parent.style.opacity = '1';
+                                    parent.style.height = 'auto';
+                                    parent = parent.parentElement;
+                                }
+
+                                // Quitar readonly y asegurar foco
+                                el.removeAttribute('readonly');
+                                el.style.display = 'block';
+                                el.style.visibility = 'visible';
+                                el.style.opacity = '1';
+                                el.dispatchEvent(new Event('focus', { bubbles: true }));
+                                el.dispatchEvent(new Event('click', { bubbles: true }));
+
+                                // Intentar abrir jQuery datepicker
+                                if (window.jQuery && jQuery.fn.datepicker) {
+                                    try {
+                                        jQuery(el).datepicker('show');
+                                    } catch (err) {
+                                        console.log('Error abriendo datepicker:', err);
+                                    }
+                                }
+                            }
+                            """)
+
+                            # Wait for real visibility of the element
+                            try:
+                                page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=5000)
+                                print(f"Visible tras intento {attempt+1}")
+                                return true
+                            except:
+                                print(f"No visible en intento {attempt+1}")
+
+                        # Recheck visibility after JS trigger
+                        is_visible_after = page.locator("#appointments_asc_appointment_date").is_visible()
+                        print(f"Is visible after JS fix? {is_visible_after}")
+
+                        html_after = page.eval_on_selector("#appointments_asc_appointment_date", "el => el.outerHTML")
+                        print("Input HTML after fix:", html_after)
+
+                        # Try to click the now-visible input
+                        print("Waiting for biometrics input to be visible...")
+                        calendar_button_bios = page.wait_for_selector(
+                            'xpath=//*[@id="appointments_asc_appointment_date"]',
+                            state='visible',
+                            timeout=60000
+                        )
+
+                        print("Biometrics date input visible, clicking...")
+                        calendar_button_bios.click(force = True)
+                        page.wait_for_load_state("networkidle")
+
+                        calendar_input = page.query_selector("#appointments_asc_appointment_date")
+                        if not calendar_input:
+                            self.final_msj = f"{self.final_msj} | No aparece calendario de biometricos"
+                            return self.final_msj
+
+                        # --- Intentos de fecha ---
+                        appointment_dt = datetime.strptime(self.appointment_date_new, "%Y-%m-%d")
+                        attempts = [
+                            appointment_dt - timedelta(days=1),
+                            appointment_dt - timedelta(days=2),
+                        ]
+                        selected_bios_date = None
+                        selected_bios_hour = None
+
+                        for i, bios_dt in enumerate(attempts):
+                            try:
+                                # Forzar fecha manualmente
+                                bios_date_str = bios_dt.strftime("%Y-%m-%d")
+                                print(f"Intentando fecha biométricos: {bios_date_str}")
+
+                                page.evaluate("""
+                                    ({ selector, value }) => {
+                                        const el = document.querySelector(selector);
+                                        if (!el) return "Element not found";
+                                        el.style.display = 'block';
+                                        el.removeAttribute('readonly');
+                                        el.value = value;
+                                        el.dispatchEvent(new Event('input',  { bubbles: true }));
+                                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                                        el.dispatchEvent(new Event('blur',   { bubbles: true }));
+                                        return "Date injected";
+                                    }
+                                """, { "selector": "#appointments_asc_appointment_date", "value": bios_date_str })
+
+                                page.click("div.callout")
+                                page.wait_for_timeout(1500)
+
+                                # Forzar campo de hora visible
+                                page.evaluate("""
+                                () => {
+                                    const el = document.querySelector('#appointments_asc_appointment_time');
+                                    if (!el) return "Element not found";
+                                    let parent = el;
+                                    while (parent) {
+                                        parent.style.display = 'block';
+                                        parent.style.visibility = 'visible';
+                                        parent.style.opacity = '1';
+                                        parent.style.height = 'auto';
+                                        parent = parent.parentElement;
+                                    }
+                                    el.removeAttribute('disabled');
+                                    el.disabled = false;
+                                    el.dispatchEvent(new Event('focus', { bubbles: true }));
+                                    el.dispatchEvent(new Event('click', { bubbles: true }));
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return "Time select forced visible";
+                                }
+                                """)
+
+                                # Esperar opciones válidas
+                                page.wait_for_function("""
+                                    () => {
+                                        const s = document.querySelector('#appointments_asc_appointment_time');
+                                        return s && s.options && s.options.length > 1 && s.options[1].value;
+                                    }
+                                """, timeout=8000)
+
+                                # Obtener la primera hora disponible
+                                available_times_bios = page.eval_on_selector_all(
+                                    '#appointments_asc_appointment_time option',
+                                    'opts => opts.map(o => o.value).filter(v => v && v.trim() !== "")'
+                                )
+
+                                if available_times_bios and len(available_times_bios) > 0:
+                                    selected_bios_date = bios_dt
+                                    selected_bios_hour = available_times_bios[0]
+                                    print(f"Hora biométricos seleccionada: {selected_bios_hour}")
+                                    break
+                                else:
+                                    print(f"No hay horarios para {bios_date_str}, intentando siguiente día...")
+                            except Exception as e:
+                                print(f"Error en intento {i+1}: {e}")
+                                continue
+
+                        # --- Resultado final ---
+                        if not selected_bios_date:
+                            selected_bios_date = appointment_dt - timedelta(days=2)
+                            selected_bios_hour = "07:00"
+                            print("No se encontraron horarios disponibles, se fuerza fecha y hora:", selected_bios_date, selected_bios_hour)
+
+                        # Asignar al formulario
+                        page.select_option('#appointments_asc_appointment_time', selected_bios_hour)
+                        page.evaluate("""
+                            () => {
+                                const el = document.querySelector('#appointments_asc_appointment_time');
+                                if (!el) return;
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                                el.dispatchEvent(new Event('blur', { bubbles: true }));
+                            }
+                        """)
+                        page.click("div.callout")
+
+                        self.biometrics_date_new = selected_bios_date.strftime("%Y-%m-%d")
+                        self.biometrics_hour_new = selected_bios_hour
+                        self.final_msj = f"{self.final_msj} | Toma para biometricos la fecha {self.biometrics_date_new} y hora {self.biometrics_hour_new}"
+                        print(self.final_msj)
+
+                    elif self.type_appointment == 'Visa grupal (Entrevista + Biométricos)':
+                        pass
+                    else: # Renovación (Entrevista)
+                        pass
+
+                    
+                    # Clic on "Reprogramar"
+                    try:
+                        page.evaluate("""
+                        () => {
+                            const btn = document.querySelector('#appointments_submit');
+                            if (btn) {
+                                btn.removeAttribute('disabled');
+                                btn.style.display = 'block';
+                                btn.style.visibility = 'visible';
+                                btn.style.opacity = '1';
+                            }
+                        }
+                        """)
+
+                        submit_button = page.wait_for_selector(
+                            '//*[@id="appointments_submit"]',
+                            state='visible', timeout=30000
+                        )
+                        submit_button.click()
+                        self.final_msj = f"{self.final_msj} | Clic en reprogramar accionado"
+                    except Exception as e:
+                        self.final_msj = f"{self.final_msj} | Error al reprogramar: {e}"
+                        print("Could not find reprogramar button:", e)
+
+                    # Confirm action
+                    try:
+                        page.evaluate("""
+                        () => {
+                            const confirmBtn = Array.from(document.querySelectorAll('a.button'))
+                                .find(el => el.textContent.trim().includes('Confirmar'));
+                            if (confirmBtn) {
+                                confirmBtn.style.display = 'block';
+                                confirmBtn.style.visibility = 'visible';
+                                confirmBtn.style.opacity = '1';
+                                confirmBtn.style.pointerEvents = 'auto';
+                                confirmBtn.removeAttribute('disabled');
+                                confirmBtn.removeAttribute('aria-disabled');
+                            }
+                        }
+                        """)
+                        page.wait_for_timeout(1000)
+
+                        confirm_button = page.wait_for_selector(
+                            "//a[contains(@class, 'button') and contains(text(), 'Confirmar')]",
+                            state='visible',
+                            timeout=15000
+                        )
+                        confirm_button.click()
+                        self.final_msj = f"{self.final_msj} | Clic en confirmar accionado"
+                        print("Clic en Confirmar accionado")
+
+                    except Exception as e:
+                        self.final_msj = f"{self.final_msj} | Error al confirmar: {e}"
+                        print("Could not find Confirmar button:", e)
+                    
+                    # Wait for confirmation message
+                    page.wait_for_load_state("networkidle")
+                    notice_element = page.wait_for_selector("div.notice", timeout=15000)
+                    notice_text = notice_element.inner_text().strip()
+
+                    # Validate message
+                    if "no pudo ser programada" in notice_text.lower():
+                        self.final_msj = f"{self.final_msj} | Reprogramación fallida"
+                        self.reschedule_success = False
+                    else:
+                        self.final_msj = f"{self.final_msj} | Reprogramado exitosamente"
+                        self.reschedule_success = True
 
                 except Exception as e:
-                    print(f"Error trying appointment date {i}: {e}")
-                    self.final_msj += f" | Error trying appointment date {i}: {e}"
-                    continue
+                    print(e)
+                    self.final_msj = f"{self.final_msj} | Fallo al reprogramar: {e}"
+                    return self.final_msj
 
-            if not success:
-                self.final_msj += " | No se logró completar combinación válida de cita + biométricos"
+            else:
+                self.final_msj = f"{self.final_msj} | Fecha disponible no es util"
                 return self.final_msj
 
-            # Final step: click “Reprogramar”
-            try:
-                page.evaluate("""
-                () => {
-                    const btn = document.querySelector('#appointments_submit');
-                    if (btn) {
-                        btn.removeAttribute('disabled');
-                        btn.style.display = 'block';
-                        btn.style.visibility = 'visible';
-                    }
-                }
-                """)
-                submit_button = page.wait_for_selector('#appointments_submit', state='visible', timeout=30000)
-                submit_button.click()
-                self.final_msj += " | Clic en reprogramar accionado"
-            except Exception as e:
-                self.final_msj += f" | Error al reprogramar: {e}"    
-
-
             browser.close()
-            return self.final_msj  
+            return self.final_msj
 
 
-            # if filtered_date < self.appointment_date:
-            #     try:
-            #         # Remove the readonly attribute
-            #         page.evaluate("(el) => el.removeAttribute('readonly')", calendar_input)
-
-            #         # Set the value and trigger events
-            #         calendar_input.evaluate(
-            #             """(el, value) => {
-            #                 el.value = value;
-            #                 el.dispatchEvent(new Event('input', { bubbles: true }));
-            #                 el.dispatchEvent(new Event('change', { bubbles: true }));
-            #             }""",
-            #             filtered_date.strftime("%Y-%m-%d")
-            #         )
-            #         page.click("div.callout")
-            #         calendar_button.click()
-            #         # Select the desired day (according to the library)
-            #         page.click("a.ui-state-default.ui-state-active")
-            #         self.appointment_date_new = filtered_date.strftime("%Y-%m-%d")
-            #         self.final_msj = f"{self.final_msj} | Toma la fecha {self.appointment_date_new}"
-
-            #         # Select first hour
-            #         time_select = page.wait_for_selector(
-            #             '//*[@id="appointments_consulate_appointment_time_input"]',
-            #             state='visible', timeout=30000
-            #         )
-            #         time_select.click()
-
-            #         # Wait for real options to be available
-            #         page.wait_for_function("""
-            #         () => {
-            #         const s = document.querySelector('#appointments_consulate_appointment_time');
-            #         return s && s.options && s.options.length > 1 && s.options[1].value;
-            #         }
-            #         """, timeout=10000)
-
-            #         # Extract available hours directly with JS
-            #         available_times = page.eval_on_selector_all(
-            #             '#appointments_consulate_appointment_time option',
-            #             'opts => opts.map(o => o.value).filter(v => v)'
-            #         )
-
-            #         print("available_times:", available_times)
-
-            #         if available_times:
-            #             self.appointment_hour_new = available_times[0]
-            #             page.select_option('#appointments_consulate_appointment_time', self.appointment_hour_new)
-            #             page.click("div.callout")
-            #             time.sleep(1)
-            #             time_select.click()
-            #             page.click("div.callout")
-            #             self.final_msj = f"{self.final_msj} | Toma la hora {self.appointment_hour_new}"
-            #         else:
-            #             self.final_msj = f"{self.final_msj} | No hay horarios disponibles validos"
-            #             return self.final_msj
-
-
-            #         # Select Biometrics Calendar // Or First Appointment
-            #         if self.type_appointment == 'Visa (Entrevista + Biométricos)' or new_appointment:
-
-            #             print("Checking if biometrics input exists...")
-            #             input_exists = page.locator("#appointments_asc_appointment_date").count()
-            #             print(f"Found {input_exists} elements with that ID")
-
-            #             # Check visibility and status
-            #             is_visible = page.locator("#appointments_asc_appointment_date").is_visible()
-            #             print(f"Is visible before JS fix? {is_visible}")
-
-            #             html_snippet = page.eval_on_selector("#appointments_asc_appointment_date", "el => el.outerHTML")
-            #             print("Input HTML before fix:", html_snippet)
-
-            #             display_status = page.eval_on_selector("#appointments_asc_appointment_date", "el => window.getComputedStyle(el).display")
-            #             visibility_status = page.eval_on_selector("#appointments_asc_appointment_date", "el => window.getComputedStyle(el).visibility")
-            #             print(f"CSS display={display_status}, visibility={visibility_status}")
-
-            #             # FIX: Force-enable and trigger the biometric date input manually
-            #             print("Trying to force show biometrics date input via JS...")
-
-            #             for attempt in range(3):
-            #                 page.wait_for_timeout(2000)
-
-            #                 page.evaluate("""
-            #                 () => {
-            #                     const el = document.querySelector('#appointments_asc_appointment_date');
-            #                     if (!el) return;
-
-            #                     // Forzar visibilidad en el input y todos sus padres
-            #                     let parent = el;
-            #                     while (parent) {
-            #                         parent.style.display = 'block';
-            #                         parent.style.visibility = 'visible';
-            #                         parent.style.opacity = '1';
-            #                         parent.style.height = 'auto';
-            #                         parent = parent.parentElement;
-            #                     }
-
-            #                     // Quitar readonly y asegurar foco
-            #                     el.removeAttribute('readonly');
-            #                     el.style.display = 'block';
-            #                     el.style.visibility = 'visible';
-            #                     el.style.opacity = '1';
-            #                     el.dispatchEvent(new Event('focus', { bubbles: true }));
-            #                     el.dispatchEvent(new Event('click', { bubbles: true }));
-
-            #                     // Intentar abrir jQuery datepicker
-            #                     if (window.jQuery && jQuery.fn.datepicker) {
-            #                         try {
-            #                             jQuery(el).datepicker('show');
-            #                         } catch (err) {
-            #                             console.log('Error abriendo datepicker:', err);
-            #                         }
-            #                     }
-            #                 }
-            #                 """)
-
-            #                 # Wait for real visibility of the element
-            #                 try:
-            #                     page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=5000)
-            #                     print(f"Visible tras intento {attempt+1}")
-            #                     return true
-            #                 except:
-            #                     print(f"No visible en intento {attempt+1}")
-
-            #             # Recheck visibility after JS trigger
-            #             is_visible_after = page.locator("#appointments_asc_appointment_date").is_visible()
-            #             print(f"Is visible after JS fix? {is_visible_after}")
-
-            #             html_after = page.eval_on_selector("#appointments_asc_appointment_date", "el => el.outerHTML")
-            #             print("Input HTML after fix:", html_after)
-
-            #             # Try to click the now-visible input
-            #             print("Waiting for biometrics input to be visible...")
-            #             calendar_button_bios = page.wait_for_selector(
-            #                 'xpath=//*[@id="appointments_asc_appointment_date"]',
-            #                 state='visible',
-            #                 timeout=60000
-            #             )
-
-            #             print("Biometrics date input visible, clicking...")
-            #             calendar_button_bios.click(force = True)
-            #             page.wait_for_load_state("networkidle")
-
-            #             calendar_input = page.query_selector("#appointments_asc_appointment_date")
-            #             if not calendar_input:
-            #                 self.final_msj = f"{self.final_msj} | No aparece calendario de biometricos"
-            #                 return self.final_msj
-
-            #             df_dates_bios = self.extract_dates(page)
-
-            #             df_dates_norm_bios = pd.DataFrame(df_dates_bios)
-            #             df_filtered_bios = df_dates_norm_bios.loc[~df_dates_norm_bios["is_disabled"]]
-
-            #             if not df_filtered_bios.empty:
-            #                 df_filtered_bios["month"] = pd.to_datetime(df_filtered_bios["month"], format="%B").dt.month
-            #                 df_filtered_bios["date"] = pd.to_datetime(df_filtered_bios[["year", "month", "day"]])
-
-            #                 # Calculate date range (2 days before to the appointment)
-            #                 var_start_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d") - timedelta(days=2)
-            #                 var_end_date = datetime.strptime(self.appointment_date_new, "%Y-%m-%d")
-
-            #                 print('Biometricos df disponibles')
-            #                 print(df_filtered_bios.head())
-
-            #                 # Filter rows in that range
-            #                 df_filtered_bios = df_filtered_bios[
-            #                     (df_filtered_bios["date"] >= var_start_date) &
-            #                     (df_filtered_bios["date"] < var_end_date)]
-
-            #                 if df_filtered_bios.empty:
-            #                     self.final_msj = f"{self.final_msj} | No hay fechas disponibles para biometricos"
-            #                     return self.final_msj
-            #                 else:
-            #                     df_filtered_bios = df_filtered_bios.sort_values(by=["date"],ascending=[False]).reset_index(drop=True)
-            #                     filtered_bios_date = pd.to_datetime(df_filtered_bios.iloc[0]["date"])
-            #                     self.final_msj = f"{self.final_msj} | Fecha biometricos disponible: {filtered_bios_date}"
-            #             else:
-            #                 self.final_msj = f"{self.final_msj} | No hay fechas disponibles para biometricos"
-            #                 return self.final_msj
-
-            #             if filtered_bios_date >= datetime.strptime(self.appointment_date_new, "%Y-%m-%d") - timedelta(days=int(self.diff_bios)):
-            #                 page.evaluate("""
-            #                     ({ selector, value }) => {
-            #                         const el = document.querySelector(selector);
-            #                         if (!el) return "Element not found";
-            #                         el.style.display = 'block';          // force visible
-            #                         el.removeAttribute('readonly');       // allow editing
-            #                         el.value = value;                     // set date
-            #                         // trigger site JS
-            #                         el.dispatchEvent(new Event('input',  { bubbles: true }));
-            #                         el.dispatchEvent(new Event('change', { bubbles: true }));
-            #                         el.dispatchEvent(new Event('blur',   { bubbles: true }));
-            #                         return "Date injected";
-            #                     }
-            #                 """, { "selector": "#appointments_asc_appointment_date", "value": filtered_bios_date.strftime("%Y-%m-%d") })
-
-            #                 page.click("div.callout")
-            #                 calendar_button_bios.click()
-            #                 # Select the desired day (according to the library)
-            #                 page.click("a.ui-state-default.ui-state-active")
-
-            #                 self.biometrics_date_new = filtered_bios_date.strftime("%Y-%m-%d")
-            #                 self.final_msj = f"{self.final_msj} | Toma para biometricos la fecha {self.biometrics_date_new}"
-                            
-                            
-            #                 print("Forzando campo de hora para biometricos (debug mode)...")
-
-            #                 # Log initial state
-            #                 try:
-            #                     initial_html = page.eval_on_selector("#appointments_asc_appointment_time", "el => el ? el.outerHTML : 'no encontrado'")
-            #                     print("HTML inicial del select de hora:", initial_html)
-            #                 except Exception as e:
-            #                     print("Error al obtener HTML inicial:", e)
-
-            #                 # Try forcing visual
-            #                 page.evaluate("""
-            #                 () => {
-            #                     const el = document.querySelector('#appointments_asc_appointment_time');
-            #                     if (!el) return "Element not found";
-
-            #                     console.log("Forzando visibilidad en el select de hora...");
-
-            #                     let parent = el;
-            #                     while (parent) {
-            #                         parent.style.display = 'block';
-            #                         parent.style.visibility = 'visible';
-            #                         parent.style.opacity = '1';
-            #                         parent.style.height = 'auto';
-            #                         parent = parent.parentElement;
-            #                     }
-
-            #                     el.removeAttribute('disabled');
-            #                     el.disabled = false;
-
-            #                     el.dispatchEvent(new Event('focus', { bubbles: true }));
-            #                     el.dispatchEvent(new Event('click', { bubbles: true }));
-            #                     el.dispatchEvent(new Event('input', { bubbles: true }));
-            #                     el.dispatchEvent(new Event('change', { bubbles: true }));
-
-            #                     console.log("Campo de hora forzado visible.");
-            #                     return "Time select forced visible";
-            #                 }
-            #                 """)
-
-            #                 # Wait for the select to become visible
-            #                 try:
-            #                     page.wait_for_selector('#appointments_asc_appointment_time', state='visible', timeout=10000)
-            #                     print("Select de hora visible.")
-            #                 except Exception as e:
-            #                     print("Select de hora no visible tras forzado:", e)
-
-            #                 # Dump de opciones para depurar
-            #                 try:
-            #                     option_count = page.eval_on_selector("#appointments_asc_appointment_time", "el => el ? el.options.length : 0")
-            #                     print(f"Número de opciones en el select (antes del wait_for_function): {option_count}")
-
-            #                     option_values = page.eval_on_selector_all(
-            #                         '#appointments_asc_appointment_time option',
-            #                         'opts => opts.map(o => ({text: o.textContent.trim(), value: o.value}))'
-            #                     )
-            #                     print("Contenido actual del select de hora:")
-            #                     for opt in option_values:
-            #                         print("  →", opt)
-            #                 except Exception as e:
-            #                     print("Error al obtener opciones:", e)
-
-            #                 # Wait for valid options (visible retries)
-            #                 try:
-            #                     print("Esperando opciones válidas en el select de hora (timeout 20s)...")
-            #                     page.wait_for_function("""
-            #                         () => {
-            #                             const s = document.querySelector('#appointments_asc_appointment_time');
-            #                             return s && s.options && s.options.length > 1 && s.options[1].value;
-            #                         }
-            #                     """, timeout=20000)
-            #                     print("Opciones válidas detectadas.")
-            #                 except Exception as e:
-            #                     print("Timeout esperando opciones válidas:", e)
-            #                     # Dump del HTML actual para analizar qué está pasando
-            #                     try:
-            #                         html_after = page.eval_on_selector("#appointments_asc_appointment_time", "el => el.outerHTML")
-            #                         print("HTML final del select de hora (tras timeout):", html_after)
-            #                     except Exception as ee:
-            #                         print("Error al leer HTML tras timeout:", ee)
-
-            #                 # Obtain and select the first available option
-            #                 available_times_bios = page.eval_on_selector_all(
-            #                     '#appointments_asc_appointment_time option',
-            #                     'opts => opts.map(o => o.value).filter(v => v && v.trim() !== "")'
-            #                 )
-            #                 print("available_times_bios:", available_times_bios)
-
-            #                 if available_times_bios and len(available_times_bios) > 0:
-            #                     self.biometrics_hour_new = available_times_bios[0]
-            #                     page.select_option('#appointments_asc_appointment_time', self.biometrics_hour_new)
-            #                     page.evaluate("""
-            #                         () => {
-            #                             const el = document.querySelector('#appointments_asc_appointment_time');
-            #                             if (!el) return;
-            #                             el.dispatchEvent(new Event('change', { bubbles: true }));
-            #                             el.dispatchEvent(new Event('blur', { bubbles: true }));
-            #                         }
-            #                     """)
-            #                     page.click("div.callout")
-            #                     self.final_msj = f"{self.final_msj} | Toma para biometricos la hora {self.biometrics_hour_new}"
-            #                 else:
-            #                     self.final_msj = f"{self.final_msj} | No hay horarios disponibles válidos para biometricos"
-            #                     return self.final_msj
-            #             else:
-            #                 self.final_msj = f"{self.final_msj} | No hay horarios disponibles validos para biometricos que cumplan las reglas"
-            #                 return self.final_msj
-
-            #         elif self.type_appointment == 'Visa grupal (Entrevista + Biométricos)':
-            #             pass
-            #         else: # Renovación (Entrevista)
-            #             pass
-
-                    
-            #         # Clic on "Reprogramar"
-            #         try:
-            #             page.evaluate("""
-            #             () => {
-            #                 const btn = document.querySelector('#appointments_submit');
-            #                 if (btn) {
-            #                     btn.removeAttribute('disabled');
-            #                     btn.style.display = 'block';
-            #                     btn.style.visibility = 'visible';
-            #                     btn.style.opacity = '1';
-            #                 }
-            #             }
-            #             """)
-
-            #             submit_button = page.wait_for_selector(
-            #                 '//*[@id="appointments_submit"]',
-            #                 state='visible', timeout=30000
-            #             )
-            #             submit_button.click()
-            #             self.final_msj = f"{self.final_msj} | Clic en reprogramar accionado"
-            #         except Exception as e:
-            #             self.final_msj = f"{self.final_msj} | Error al reprogramar: {e}"
-            #             print("Could not find reprogramar button:", e)
-
-            #         # Confirm action
-            #         try:
-            #             page.evaluate("""
-            #             () => {
-            #                 const confirmBtn = Array.from(document.querySelectorAll('a.button'))
-            #                     .find(el => el.textContent.trim().includes('Confirmar'));
-            #                 if (confirmBtn) {
-            #                     confirmBtn.style.display = 'block';
-            #                     confirmBtn.style.visibility = 'visible';
-            #                     confirmBtn.style.opacity = '1';
-            #                     confirmBtn.style.pointerEvents = 'auto';
-            #                     confirmBtn.removeAttribute('disabled');
-            #                     confirmBtn.removeAttribute('aria-disabled');
-            #                 }
-            #             }
-            #             """)
-            #             page.wait_for_timeout(1000)
-
-            #             confirm_button = page.wait_for_selector(
-            #                 "//a[contains(@class, 'button') and contains(text(), 'Confirmar')]",
-            #                 state='visible',
-            #                 timeout=15000
-            #             )
-            #             confirm_button.click()
-            #             self.final_msj = f"{self.final_msj} | Clic en confirmar accionado"
-            #             print("Clic en Confirmar accionado")
-
-            #         except Exception as e:
-            #             self.final_msj = f"{self.final_msj} | Error al confirmar: {e}"
-            #             print("Could not find Confirmar button:", e)
-                    
-            #         # Wait for confirmation message
-            #         page.wait_for_load_state("networkidle")
-            #         notice_element = page.wait_for_selector("div.notice", timeout=15000)
-            #         notice_text = notice_element.inner_text().strip()
-
-            #         # Validate message
-            #         if "no pudo ser programada" in notice_text.lower():
-            #             self.final_msj = f"{self.final_msj} | Reprogramación fallida"
-            #             self.reschedule_success = False
-            #         else:
-            #             self.final_msj = f"{self.final_msj} | Reprogramado exitosamente"
-            #             self.reschedule_success = True
-
-            #     except Exception as e:
-            #         print(e)
-            #         self.final_msj = f"{self.final_msj} | Fallo al reprogramar: {e}"
-            #         return self.final_msj
-
-            # else:
-            #     self.final_msj = f"{self.final_msj} | Fecha disponible no es util"
-                # return self.final_msj
-
-            # browser.close()
-            # return self.final_msj
-
-    # 03. Auxiliary function to get available hours
-    def _get_available_hours(self, page, select_id):
-        """Extract available time options from a <select> element"""
-        try:
-            page.wait_for_function(f"""
-            () => {{
-                const s = document.querySelector('{select_id}');
-                return s && s.options && s.options.length > 1 && s.options[1].value;
-            }}
-            """, timeout=10000)
-            return page.eval_on_selector_all(
-                f'{select_id} option',
-                'opts => opts.map(o => o.value).filter(v => v && v.trim() !== "")'
-            )
-        except Exception as e:
-            self.final_msj += f" | No hay horarios disponibles válidos para el selector {select_id}: {e}"
-            return []
-
-    # 04. Auxiliary function to extract biometric dates
-    def _extract_biometric_dates(self, page):
-        """Ensure the biometric date field is visible and return available dates."""
-        if not self.df_bios_raw.empty:
-            return self.df_bios_raw
-
-        try:
-            for attempt in range(5):
-                page.wait_for_timeout(1500)
-                print(f"Intento {attempt+1} de mostrar biométricos...")
-
-                # Asegurar que el contenedor exista
-                try:
-                    page.wait_for_selector("#asc_date_time", timeout=8000)
-                except Exception:
-                    print("No se encontró el contenedor #asc_date_time todavía.")
-                    continue
-
-                # Forzar visibilidad completa del campo y contenedor
-                page.evaluate("""
-                () => {
-                    const el = document.querySelector('#appointments_asc_appointment_date');
-                    if (!el) return;
-
-                    // Mostrar el contenedor del calendario
-                    const ascContainer = document.querySelector('#asc_date_time');
-                    if (ascContainer) {
-                        ascContainer.style.display = 'block';
-                        ascContainer.style.visibility = 'visible';
-                        ascContainer.style.opacity = '1';
-                        ascContainer.style.height = 'auto';
-                    }
-
-                    // Ocultar mensaje de sistema ocupado
-                    const notAvailable = document.querySelector('#asc_date_time_not_available');
-                    if (notAvailable) {
-                        notAvailable.style.display = 'none';
-                        notAvailable.style.visibility = 'hidden';
-                    }
-
-                    // Forzar visibilidad en todos los padres del input
-                    let p = el;
-                    while (p) {
-                        p.style.display = 'block';
-                        p.style.visibility = 'visible';
-                        p.style.opacity = '1';
-                        p.style.height = 'auto';
-                        p = p.parentElement;
-                    }
-
-                    // Hacer el input editable y enfocado
-                    el.removeAttribute('readonly');
-                    el.style.display = 'block';
-                    el.style.visibility = 'visible';
-                    el.dispatchEvent(new Event('focus', { bubbles: true }));
-                    el.dispatchEvent(new Event('click', { bubbles: true }));
-
-                    // Intentar mostrar el datepicker si jQuery está disponible
-                    if (window.jQuery && jQuery.fn.datepicker) {
-                        try { jQuery(el).datepicker('show'); } catch (err) {}
-                    }
-                }
-                """)
-
-                # Esperar el calendario visible
-                try:
-                    page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=4000)
-                    page.wait_for_selector(".ui-datepicker-calendar", state="visible", timeout=4000)
-                    print("Datepicker visible.")
-                    break
-                except Exception as e:
-                    print(f"No visible en intento {attempt+1}: {e}")
-                    if attempt == 4:
-                        print("Último intento fallido. No se logró mostrar el calendario.")
-                        return pd.DataFrame()
-
-            # Intentar extraer las fechas
-            df_bios = pd.DataFrame(self.extract_dates(page))
-            df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
-
-            # Si no hay fechas, intentar un segundo intento forzando de nuevo
-            if df_bios.empty:
-                print("No se encontraron fechas biométricas. Reintentando extracción...")
-                page.evaluate("() => window.scrollTo(0, document.body.scrollHeight);")
-                page.wait_for_timeout(2000)
-                df_bios = pd.DataFrame(self.extract_dates(page))
-                df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
-
-            if df_bios.empty:
-                print("No se encontraron fechas biométricas tras reintento.")
-                self.final_msj += f" | No se encontraron fechas biométricas tras reintento."
-                return pd.DataFrame()
-
-            # Normalizar y ordenar
-            df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
-            df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
-            df_bios = df_bios.sort_values("date").reset_index(drop=True)
-            self.df_bios_raw = df_bios.copy()
-
-            print(f"{len(df_bios)} fechas biométricas disponibles encontradas.")
-            self.final_msj += f" | Fechas biométricas encontradas: {len(df_bios)}"
-            return df_bios
-
-        except Exception as e:
-            print("Error extracting biometric dates:", e)
-            self.final_msj += f" | Error extracting biometric dates: {e}"
-            return pd.DataFrame()
-
-    # def _extract_biometric_dates(self, page):
-    #     """Ensure the biometric date field is visible and return available dates"""
-    #     if self.df_bios_raw.empty:
-    #         try:
-    #             for attempt in range(3):
-    #                 page.wait_for_timeout(2000)
-
-    #                 page.evaluate("""
-    #                 () => {
-    #                     const el = document.querySelector('#appointments_asc_appointment_date');
-    #                     if (!el) return;
-
-    #                     // Forzar visibilidad en el input y todos sus padres
-    #                     let parent = el;
-    #                     while (parent) {
-    #                         parent.style.display = 'block';
-    #                         parent.style.visibility = 'visible';
-    #                         parent.style.opacity = '1';
-    #                         parent.style.height = 'auto';
-    #                         parent = parent.parentElement;
-    #                     }
-
-    #                     // Quitar readonly y asegurar foco
-    #                     el.removeAttribute('readonly');
-    #                     el.style.display = 'block';
-    #                     el.style.visibility = 'visible';
-    #                     el.style.opacity = '1';
-    #                     el.dispatchEvent(new Event('focus', { bubbles: true }));
-    #                     el.dispatchEvent(new Event('click', { bubbles: true }));
-
-    #                     // Intentar abrir jQuery datepicker
-    #                     if (window.jQuery && jQuery.fn.datepicker) {
-    #                         try {
-    #                             jQuery(el).datepicker('show');
-    #                         } catch (err) {
-    #                             console.log('Error abriendo datepicker:', err);
-    #                         }
-    #                     }
-    #                 }
-    #                 """)
-
-    #                 # Wait for real visibility of the element
-    #                 try:
-    #                     page.wait_for_selector("#appointments_asc_appointment_date", state="visible", timeout=5000)
-    #                     print(f"Visible tras intento {attempt+1}")
-    #                     return true
-    #                 except:
-    #                     print(f"No visible en intento {attempt+1}")
-                
-    #             page.evaluate("""
-    #             () => {
-    #                 const el = document.querySelector('#appointments_asc_appointment_date');
-    #                 if (!el) return;
-    #                 let p = el;
-    #                 while (p) {
-    #                     p.style.display = 'block';
-    #                     p.style.visibility = 'visible';
-    #                     p = p.parentElement;
-    #                 }
-    #                 el.removeAttribute('readonly');
-    #             }
-    #             """)
-    #             bios_input = page.wait_for_selector('#appointments_asc_appointment_date', state='visible', timeout=8000)
-    #             bios_input.click(force=True)
-    #             page.wait_for_load_state("networkidle")
-
-    #             df_bios = pd.DataFrame(self.extract_dates(page))
-    #             df_bios = df_bios.loc[~df_bios["is_disabled"]].drop_duplicates().copy()
-
-    #             if df_bios.empty:
-    #                 return pd.DataFrame()
-
-    #             df_bios["month"] = pd.to_datetime(df_bios["month"], format="%B").dt.month
-    #             df_bios["date"] = pd.to_datetime(df_bios[["year", "month", "day"]])
-    #             df_bios = df_bios.sort_values("date").reset_index(drop=True)
-    #             self.df_bios_raw = df_bios.copy()
-    #             return df_bios
-
-    #         except Exception as e:
-    #             print("Error extracting biometric dates:", e)
-    #             return pd.DataFrame()
-    #     else:
-    #         return self.df_bios_raw
-
-    # 05. Auxiliary function to try biometric date/hour combinations
-    def _try_biometric_combination(self, page, appointment_date, bios_date):
-        """Try selecting a biometric date/hour combination"""
-        try:
-            self.biometrics_date_new = bios_date.strftime("%Y-%m-%d")
-
-            # Set date manually
-            page.evaluate("""
-            ({value}) => {
-                const el = document.querySelector('#appointments_asc_appointment_date');
-                if (!el) return;
-                el.value = value;
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-            """, {"value": self.biometrics_date_new})
-
-            available_times = self._get_available_hours(page, "#appointments_asc_appointment_time")
-            if not available_times:
-                print(f"No biometrics hours for {bios_date}")
-                self.final_msj += f" | No biometrics hours available for {bios_date}"
-                return False
-
-            self.biometrics_hour_new = available_times[0]
-            page.select_option('#appointments_asc_appointment_time', self.biometrics_hour_new)
-            page.click("div.callout")
-
-            self.final_msj += f" | Biométricos: {self.biometrics_date_new} {self.biometrics_hour_new}"
-            return True
-
-        except Exception as e:
-            print(f"Error selecting biometrics combination: {e}")
-            return False
-
-
-    # 06. Auxiliary function to loop through and identify selectables
+    # 03. Auxiliary function to loop through and identify selectables
     # The appointment and bios calendars are looped through
     def extract_dates(self, page):
         all_dates = []
-        for m in range(self.months_to_extract):
-            # Obtener el HTML actual
+        for _ in range(self.months_to_extract):
+            # Obtain the HTML of the current page
             soup = BeautifulSoup(page.content(), 'html.parser')
             calendar_groups = soup.find_all("div", class_="ui-datepicker-group")
 
-            if not calendar_groups:
-                print(f"[extract_dates] No se encontraron grupos de calendario en mes {m+1}.")
-                continue
-
             for group in calendar_groups:
-                month_tag = group.find("span", class_="ui-datepicker-month")
-                year_tag = group.find("span", class_="ui-datepicker-year")
+                month = group.find("span", class_="ui-datepicker-month").text
+                year = group.find("span", class_="ui-datepicker-year").text
                 calendar = group.find("table", class_="ui-datepicker-calendar")
+                days = calendar.find_all("td")
 
-                if not (month_tag and year_tag and calendar):
-                    continue
-
-                month = month_tag.text.strip()
-                year = year_tag.text.strip()
-
-                for day in calendar.find_all("td"):
+                for day in days:
                     classes = day.get("class", [])
-                    if "ui-datepicker-other-month" in classes:
-                        continue
+                    is_selectable = "ui-datepicker-unselectable" not in classes
+                    is_disabled = "ui-state-disabled" in classes
 
-                    date_info = {
-                        'day': day.text.strip(),
-                        'month': month,
-                        'year': year,
-                        'is_selectable': "ui-datepicker-unselectable" not in classes,
-                        'is_disabled': "ui-state-disabled" in classes
-                    }
-                    all_dates.append(date_info)
-
-            # Intentar pasar al siguiente mes
-            try:
-                next_button = page.query_selector('//a[@title="Next"]')
-                if next_button:
-                    # Si el botón está oculto, intentar hacerlo visible
-                    page.evaluate("""
-                    () => {
-                        const btn = document.querySelector('a[title="Next"]');
-                        if (btn) {
-                            btn.style.display = 'block';
-                            btn.style.visibility = 'visible';
+                    if day.text and "ui-datepicker-other-month" not in classes:
+                        date_info = {
+                            'day': day.text.strip(),
+                            'month': month,
+                            'year': year,
+                            'is_selectable': is_selectable,
+                            'is_disabled': is_disabled
                         }
-                    }
-                    """)
-                    # Esperar un breve momento y hacer clic
-                    page.wait_for_timeout(500)
-                    next_button.click()
-                    page.wait_for_timeout(1200)
-                else:
-                    print("[extract_dates] No se encontró botón Next, saliendo del bucle.")
-                    self.final_msj += " | No se encontró botón Next"
-                    break
-            except Exception as e:
-                print(f"[extract_dates] No se pudo hacer clic en Next (mes {m+1}): {e}")
-                break
+                        all_dates.append(date_info)
+
+            # Wait and click on the "Next" button
+            next_button = page.wait_for_selector('xpath=//a[@title="Next"]', state='visible', timeout=60000)
+            next_button.click()
 
         return all_dates
 
 
-    # 07. Send email notification
+    # 04. Send email notification
     # # Scenario 1: User issue
     # # Scenario 2: Successful scheduling
     def send_email_notification(self, scenery):
@@ -1224,7 +781,7 @@ class LumeProton00:
 
 
 
-    # 08. Orquestador / Run function
+    # 05. Orquestador / Run function
     def run(self):
         # Read Google Sheet to get users
         self.username_chosen, self.password_chosen = self.read_drive()
