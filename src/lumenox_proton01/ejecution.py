@@ -563,13 +563,17 @@ class LumeProton00:
                                 }
                                 """)
 
-                                # Esperar opciones válidas
-                                page.wait_for_function("""
-                                    () => {
-                                        const s = document.querySelector('#appointments_asc_appointment_time');
-                                        return s && s.options && s.options.length > 1 && s.options[1].value;
-                                    }
-                                """, timeout=8000)
+                                # Esperar a que carguen las opciones válidas
+                                try:
+                                    page.wait_for_function("""
+                                        () => {
+                                            const s = document.querySelector('#appointments_asc_appointment_time');
+                                            return s && s.options && s.options.length > 1 && s.options[1].value;
+                                        }
+                                    """, timeout=8000)
+                                except Exception:
+                                    print(f"No se cargaron opciones para {bios_date_str}")
+                                    continue  # probar siguiente fecha
 
                                 # Obtener la primera hora disponible
                                 available_times_bios = page.eval_on_selector_all(
